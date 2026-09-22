@@ -139,6 +139,12 @@ Faster 5x5 median filters for 8-bit images
 
 ``ImageFilter.MedianFilter(5)`` now uses an optimized 8-bit path.
 
+Faster border expansion for rank filters
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Copying the image interior while preparing the replicated border for rank filters has
+been optimized.
+
 PNG palettes are no longer padded when saving with the ``bits`` argument
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
