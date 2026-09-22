@@ -26,8 +26,10 @@ MODES = (
 )
 
 
-def medianfilter_3x3_reference(im: Image.Image) -> Image.Image:
+def medianfilter_reference(im: Image.Image, filter_size: int) -> Image.Image:
     size = im.size
+    margin = filter_size // 2
+    rank = filter_size * filter_size // 2
     expected_bands = []
     for band in im.split():
         expected = []
@@ -40,14 +42,22 @@ def medianfilter_3x3_reference(im: Image.Image) -> Image.Image:
                             min(max(y + dy, 0), size[1] - 1),
                         )
                     )
-                    for dy in (-1, 0, 1)
-                    for dx in (-1, 0, 1)
+                    for dy in range(-margin, margin + 1)
+                    for dx in range(-margin, margin + 1)
                 ]
-                expected.append(sorted(window)[4])
+                expected.append(sorted(window)[rank])
         expected_bands.append(Image.new("L", size))
         expected_bands[-1].putdata(expected)
 
     return Image.merge(im.mode, expected_bands)
+
+
+def medianfilter_3x3_reference(im: Image.Image) -> Image.Image:
+    return medianfilter_reference(im, 3)
+
+
+def medianfilter_5x5_reference(im: Image.Image) -> Image.Image:
+    return medianfilter_reference(im, 5)
 
 
 @pytest.mark.parametrize(
@@ -245,6 +255,43 @@ def test_medianfilter_3x3_uint8_patterns(mode: str, pattern: str) -> None:
     assert_image_equal(result, medianfilter_3x3_reference(im))
 
 
+@pytest.mark.parametrize(
+    "mode", ("L", "LA", "La", "RGB", "RGBA", "RGBa", "RGBX", "CMYK")
+)
+@pytest.mark.parametrize(
+    "pattern", ("random", "constant", "low_cardinality", "duplicates", "extremes")
+)
+@pytest.mark.parametrize("size", ((17, 13), (21, 9), (18, 11)))
+def test_medianfilter_5x5_uint8_patterns(
+    mode: str, pattern: str, size: tuple[int, int]
+) -> None:
+    rng = random.Random(8675309)
+    bands = Image.getmodebands(mode)
+
+    if pattern == "random":
+        values = [rng.randrange(256) for _ in range(size[0] * size[1] * bands)]
+    elif pattern == "constant":
+        values = [73] * (size[0] * size[1] * bands)
+    elif pattern == "low_cardinality":
+        palette = (0, 17, 17, 128, 240, 255)
+        values = [
+            palette[rng.randrange(len(palette))]
+            for _ in range(size[0] * size[1] * bands)
+        ]
+    elif pattern == "duplicates":
+        values = [(i // bands) % 5 * 51 for i in range(size[0] * size[1] * bands)]
+    else:
+        values = [
+            (0, 255, 1, 254, 128)[(i // bands) % 5]
+            for i in range(size[0] * size[1] * bands)
+        ]
+
+    im = Image.frombytes(mode, size, bytes(values))
+    result = im.filter(ImageFilter.MedianFilter(5))
+
+    assert_image_equal(result, medianfilter_5x5_reference(im))
+
+
 @pytest.mark.parametrize("mode", ("L", "RGB"))
 @pytest.mark.parametrize("size", ((1, 1), (1, 5), (5, 1), (2, 2)))
 def test_medianfilter_3x3_tiny_uint8_images(mode: str, size: tuple[int, int]) -> None:
@@ -254,11 +301,54 @@ def test_medianfilter_3x3_tiny_uint8_images(mode: str, size: tuple[int, int]) ->
     )
 
 
+@pytest.mark.parametrize("mode", ("L", "RGB"))
+@pytest.mark.parametrize("size", ((1, 1), (1, 5), (5, 1), (2, 2), (4, 7), (7, 4)))
+def test_medianfilter_5x5_tiny_uint8_images(mode: str, size: tuple[int, int]) -> None:
+    im = hopper(mode).resize(size)
+    assert_image_equal(
+        im.filter(ImageFilter.MedianFilter(5)), medianfilter_5x5_reference(im)
+    )
+
+
 @pytest.mark.parametrize("mode", ("I", "F"))
 def test_medianfilter_3x3_numeric_modes(mode: str) -> None:
     im = Image.new(mode, (3, 3))
     im.putdata([5, 1, 5, 7, 3, 3, 9, 1, 5])
     assert im.filter(ImageFilter.MedianFilter(3)).getpixel((1, 1)) == 5
+
+
+@pytest.mark.parametrize("mode", ("I", "F"))
+def test_medianfilter_5x5_numeric_modes(mode: str) -> None:
+    values = [
+        17,
+        5,
+        5,
+        2,
+        9,
+        1,
+        21,
+        21,
+        3,
+        3,
+        8,
+        13,
+        13,
+        13,
+        34,
+        55,
+        1,
+        2,
+        89,
+        144,
+        0,
+        0,
+        233,
+        377,
+        610,
+    ]
+    im = Image.new(mode, (5, 5))
+    im.putdata(values)
+    assert im.filter(ImageFilter.MedianFilter(5)).getpixel((2, 2)) == sorted(values)[12]
 
 
 def test_builtinfilter_p() -> None:
