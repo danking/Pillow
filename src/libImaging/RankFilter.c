@@ -102,6 +102,31 @@ MakeRankFunction(UINT8) MakeRankFunction(INT32) MakeRankFunction(FLOAT32)
     return p4;
 }
 
+static inline UINT8
+RankMedian5x5UINT8(const UINT8 p[25]) {
+    UINT8 v[25];
+    int i, j;
+
+    memcpy(v, p, sizeof(v));
+
+#define RANK_COMPARE_SWAP_UINT8_INDEX(a, b)    \
+    do {                                       \
+        UINT8 lo_ = v[a] < v[b] ? v[a] : v[b]; \
+        UINT8 hi_ = v[a] < v[b] ? v[b] : v[a]; \
+        v[a] = lo_;                            \
+        v[b] = hi_;                            \
+    } while (0)
+
+    for (i = 0; i <= 12; i++) {
+        for (j = i + 1; j < 25; j++) {
+            RANK_COMPARE_SWAP_UINT8_INDEX(i, j);
+        }
+    }
+
+#undef RANK_COMPARE_SWAP_UINT8_INDEX
+    return v[12];
+}
+
 /*
  * This network is the scalar selection network specialized for five sorted
  * columns. Inputs use p[5 * horizontal_column + vertical_rank], and p12 is
@@ -175,27 +200,42 @@ MakeRankFunction(UINT8) MakeRankFunction(INT32) MakeRankFunction(FLOAT32)
     sort2(11, 12);                                   \
     sort2(12, 16)
 
+/* The block length is a batching choice, not a compiler vector type. */
+#define RANK_AUTOVEC_LANES 16
+
 static inline void
-RankSort5UINT8(UINT8 *p0, UINT8 *p1, UINT8 *p2, UINT8 *p3, UINT8 *p4) {
-#define RANK_COMPARE_SWAP_SORT5_UINT8(a, b)    \
-    do {                                       \
-        UINT8 lo_ = *(a) < *(b) ? *(a) : *(b); \
-        UINT8 hi_ = *(a) < *(b) ? *(b) : *(a); \
-        *(a) = lo_;                            \
-        *(b) = hi_;                            \
+RankSort5UINT8Block(UINT8 p[5][2 * RANK_AUTOVEC_LANES], size_t offset) {
+    for (size_t lane = 0; lane < RANK_AUTOVEC_LANES; lane++) {
+#define RANK_COMPARE_SWAP_SORT5_UINT8(a, b) \
+    do {                                    \
+        UINT8 lo_ = (a) < (b) ? (a) : (b);  \
+        UINT8 hi_ = (a) < (b) ? (b) : (a);  \
+        (a) = lo_;                          \
+        (b) = hi_;                          \
     } while (0)
+        UINT8 p0 = p[0][offset + lane];
+        UINT8 p1 = p[1][offset + lane];
+        UINT8 p2 = p[2][offset + lane];
+        UINT8 p3 = p[3][offset + lane];
+        UINT8 p4 = p[4][offset + lane];
 
-    RANK_COMPARE_SWAP_SORT5_UINT8(p0, p3);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p1, p4);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p0, p2);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p1, p3);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p0, p1);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p2, p4);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p1, p2);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p3, p4);
-    RANK_COMPARE_SWAP_SORT5_UINT8(p2, p3);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p0, p3);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p1, p4);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p0, p2);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p1, p3);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p0, p1);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p2, p4);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p1, p2);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p3, p4);
+        RANK_COMPARE_SWAP_SORT5_UINT8(p2, p3);
 
+        p[0][offset + lane] = p0;
+        p[1][offset + lane] = p1;
+        p[2][offset + lane] = p2;
+        p[3][offset + lane] = p3;
+        p[4][offset + lane] = p4;
 #undef RANK_COMPARE_SWAP_SORT5_UINT8
+    }
 }
 
 static inline UINT8
@@ -238,6 +278,41 @@ RankMedian5x5SortedColumnsUINT8(
 
 #undef RANK_COMPARE_SWAP_SORTED_UINT8
     return p12;
+}
+
+static void
+RankMedian5x5SortedColumnsUINT8Block(
+    UINT8 *restrict out, const UINT8 p[5][2 * RANK_AUTOVEC_LANES], size_t lanes
+) {
+    for (size_t lane = 0; lane < lanes; lane++) {
+        out[lane] = RankMedian5x5SortedColumnsUINT8(
+            p[0][lane],
+            p[1][lane],
+            p[2][lane],
+            p[3][lane],
+            p[4][lane],
+            p[0][lane + 1],
+            p[1][lane + 1],
+            p[2][lane + 1],
+            p[3][lane + 1],
+            p[4][lane + 1],
+            p[0][lane + 2],
+            p[1][lane + 2],
+            p[2][lane + 2],
+            p[3][lane + 2],
+            p[4][lane + 2],
+            p[0][lane + 3],
+            p[1][lane + 3],
+            p[2][lane + 3],
+            p[3][lane + 3],
+            p[4][lane + 3],
+            p[0][lane + 4],
+            p[1][lane + 4],
+            p[2][lane + 4],
+            p[3][lane + 4],
+            p[4][lane + 4]
+        );
+    }
 }
 
 static void
@@ -289,66 +364,48 @@ RankFilter5x5MedianUINT8Row(
     const UINT8 *row4,
     size_t xsize
 ) {
-    for (size_t x = 0; x < xsize; x++) {
-        UINT8 p0 = row0[x];
-        UINT8 p1 = row1[x];
-        UINT8 p2 = row2[x];
-        UINT8 p3 = row3[x];
-        UINT8 p4 = row4[x];
-        UINT8 p5 = row0[x + 1];
-        UINT8 p6 = row1[x + 1];
-        UINT8 p7 = row2[x + 1];
-        UINT8 p8 = row3[x + 1];
-        UINT8 p9 = row4[x + 1];
-        UINT8 p10 = row0[x + 2];
-        UINT8 p11 = row1[x + 2];
-        UINT8 p12 = row2[x + 2];
-        UINT8 p13 = row3[x + 2];
-        UINT8 p14 = row4[x + 2];
-        UINT8 p15 = row0[x + 3];
-        UINT8 p16 = row1[x + 3];
-        UINT8 p17 = row2[x + 3];
-        UINT8 p18 = row3[x + 3];
-        UINT8 p19 = row4[x + 3];
-        UINT8 p20 = row0[x + 4];
-        UINT8 p21 = row1[x + 4];
-        UINT8 p22 = row2[x + 4];
-        UINT8 p23 = row3[x + 4];
-        UINT8 p24 = row4[x + 4];
+    size_t x = 0;
 
-        RankSort5UINT8(&p0, &p1, &p2, &p3, &p4);
-        RankSort5UINT8(&p5, &p6, &p7, &p8, &p9);
-        RankSort5UINT8(&p10, &p11, &p12, &p13, &p14);
-        RankSort5UINT8(&p15, &p16, &p17, &p18, &p19);
-        RankSort5UINT8(&p20, &p21, &p22, &p23, &p24);
+    if (xsize >= 64) {
+        UINT8 columns[5][2 * RANK_AUTOVEC_LANES];
+        UINT8 result[RANK_AUTOVEC_LANES];
+        const UINT8 *rows[5] = {row0, row1, row2, row3, row4};
 
-        out[x] = RankMedian5x5SortedColumnsUINT8(
-            p0,
-            p1,
-            p2,
-            p3,
-            p4,
-            p5,
-            p6,
-            p7,
-            p8,
-            p9,
-            p10,
-            p11,
-            p12,
-            p13,
-            p14,
-            p15,
-            p16,
-            p17,
-            p18,
-            p19,
-            p20,
-            p21,
-            p22,
-            p23,
-            p24
-        );
+        for (size_t rank = 0; rank < 5; rank++) {
+            memcpy(columns[rank], rows[rank], RANK_AUTOVEC_LANES);
+        }
+        RankSort5UINT8Block(columns, 0);
+
+        for (; x <= xsize - 28; x += RANK_AUTOVEC_LANES) {
+            for (size_t rank = 0; rank < 5; rank++) {
+                memcpy(
+                    columns[rank] + RANK_AUTOVEC_LANES,
+                    rows[rank] + x + RANK_AUTOVEC_LANES,
+                    RANK_AUTOVEC_LANES
+                );
+            }
+            RankSort5UINT8Block(columns, RANK_AUTOVEC_LANES);
+            RankMedian5x5SortedColumnsUINT8Block(result, columns, RANK_AUTOVEC_LANES);
+            memcpy(out + x, result, RANK_AUTOVEC_LANES);
+            for (size_t rank = 0; rank < 5; rank++) {
+                memcpy(
+                    columns[rank],
+                    columns[rank] + RANK_AUTOVEC_LANES,
+                    RANK_AUTOVEC_LANES
+                );
+            }
+        }
+    }
+
+    for (; x < xsize; x++) {
+        UINT8 p[25] = {
+            row0[x], row0[x + 1], row0[x + 2], row0[x + 3], row0[x + 4],
+            row1[x], row1[x + 1], row1[x + 2], row1[x + 3], row1[x + 4],
+            row2[x], row2[x + 1], row2[x + 2], row2[x + 3], row2[x + 4],
+            row3[x], row3[x + 1], row3[x + 2], row3[x + 3], row3[x + 4],
+            row4[x], row4[x + 1], row4[x + 2], row4[x + 3], row4[x + 4],
+        };
+        out[x] = RankMedian5x5UINT8(p);
     }
 }
 

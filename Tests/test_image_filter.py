@@ -292,6 +292,28 @@ def test_medianfilter_5x5_uint8_patterns(
     assert_image_equal(result, medianfilter_5x5_reference(im))
 
 
+@pytest.mark.parametrize("mode", ("L", "RGB", "RGBA"))
+@pytest.mark.parametrize("pattern", ("random", "constant", "low_cardinality"))
+@pytest.mark.parametrize("size", ((64, 7), (65, 9), (79, 6)))
+def test_medianfilter_5x5_uint8_wide_patterns(
+    mode: str, pattern: str, size: tuple[int, int]
+) -> None:
+    rng = random.Random(8675309)
+    count = size[0] * size[1] * Image.getmodebands(mode)
+    values = [rng.randrange(256) for _ in range(count)]
+    if pattern == "constant":
+        values = [73] * count
+    elif pattern == "low_cardinality":
+        palette = (0, 17, 128, 240, 255)
+        values = [palette[value % len(palette)] for value in values]
+
+    im = Image.frombytes(mode, size, bytes(values))
+
+    assert_image_equal(
+        im.filter(ImageFilter.MedianFilter(5)), medianfilter_5x5_reference(im)
+    )
+
+
 @pytest.mark.parametrize("mode", ("L", "RGB"))
 @pytest.mark.parametrize("size", ((1, 1), (1, 5), (5, 1), (2, 2)))
 def test_medianfilter_3x3_tiny_uint8_images(mode: str, size: tuple[int, int]) -> None:
