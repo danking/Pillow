@@ -227,6 +227,97 @@ def test_rankfilter_overflow() -> None:
             im.filter(rankfilter)
 
 
+EXPAND_MODES = (
+    "1",
+    "L",
+    "P",
+    "LA",
+    "La",
+    "PA",
+    "I",
+    "F",
+    "I;16",
+    "I;16B",
+    "I;16L",
+    "I;16N",
+    "RGB",
+    "RGBA",
+    "RGBa",
+    "RGBX",
+    "CMYK",
+    "YCbCr",
+    "LAB",
+    "HSV",
+)
+
+
+def expand_test_image(mode: str, size: tuple[int, int]) -> Image.Image:
+    im = Image.new(mode, size)
+    bands = Image.getmodebands(mode)
+    values: list[float | int | tuple[int, ...]] = []
+    for i in range(size[0] * size[1]):
+        if mode == "F":
+            values.append((i - 7) / 3)
+        elif mode == "I":
+            values.append(i * 100003 - 200000)
+        elif mode == "1":
+            values.append(255 if i % 3 else 0)
+        elif bands == 1:
+            values.append((i * 977 + 31) % 65536)
+        else:
+            values.append(
+                tuple((i * 73 + band * 41 + 17) % 256 for band in range(bands))
+            )
+    im.putdata(values)
+    if mode == "P":
+        im.putpalette([value % 256 for value in range(768)])
+    return im
+
+
+@pytest.mark.parametrize("mode", EXPAND_MODES)
+def test_expand_matches_clamped_border_oracle(mode: str) -> None:
+    rng = random.Random(f"expand-{mode}")
+    dimensions = [(1, 1), (2, 3), (15, 2), (16, 5), (17, 3), (31, 4)]
+    dimensions.extend((rng.randrange(1, 34), rng.randrange(1, 9)) for _ in range(10))
+
+    for width, height in dimensions:
+        im = expand_test_image(mode, (width, height))
+        for margin in (0, 1, 2, 3):
+            expanded = Image.Image()._new(im.im.expand(margin))
+            assert expanded.mode == mode
+            assert expanded.size == (width + 2 * margin, height + 2 * margin)
+            for y in range(expanded.height):
+                source_y = min(max(y - margin, 0), height - 1)
+                for x in range(expanded.width):
+                    source_x = min(max(x - margin, 0), width - 1)
+                    assert expanded.getpixel((x, y)) == im.getpixel(
+                        (source_x, source_y)
+                    )
+            if mode == "P":
+                assert expanded.getpalette() == im.getpalette()
+
+
+@pytest.mark.parametrize("mode", ("L", "RGB", "I", "F"))
+@pytest.mark.parametrize("size", ((0, 0), (0, 3), (3, 0)))
+def test_expand_zero_margin_empty_image(mode: str, size: tuple[int, int]) -> None:
+    im = Image.new(mode, size)
+    expanded = Image.Image()._new(im.im.expand(0))
+
+    assert expanded.mode == im.mode
+    assert expanded.size == im.size
+    assert expanded.im is not im.im
+
+
+def test_expand_returns_independent_copy() -> None:
+    im = expand_test_image("L", (3, 2))
+    original = im.tobytes()
+
+    expanded = Image.Image()._new(im.im.expand(2))
+    expanded.putpixel((2, 2), 255)
+
+    assert im.tobytes() == original
+
+
 @pytest.mark.parametrize(
     "mode", ("L", "LA", "La", "RGB", "RGBA", "RGBa", "RGBX", "CMYK")
 )

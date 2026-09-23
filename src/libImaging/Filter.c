@@ -58,6 +58,8 @@ Imaging
 ImagingExpand(Imaging imIn, int margin) {
     Imaging imOut;
     int x, y;
+    int xsize = imIn->xsize;
+    int ysize = imIn->ysize;
     ImagingSectionCookie cookie;
 
     if (margin < 0) {
@@ -76,38 +78,47 @@ ImagingExpand(Imaging imIn, int margin) {
         return NULL;
     }
 
-#define EXPAND_LINE(type, image, yin, yout)                       \
-    {                                                             \
-        for (x = 0; x < margin; x++) {                            \
-            imOut->image[yout][x] = imIn->image[yin][0];          \
-        }                                                         \
-        for (x = 0; x < imIn->xsize; x++) {                       \
-            imOut->image[yout][x + margin] = imIn->image[yin][x]; \
-        }                                                         \
-        for (x = 0; x < margin; x++) {                            \
-            imOut->image[yout][margin + imIn->xsize + x] =        \
-                imIn->image[yin][imIn->xsize - 1];                \
-        }                                                         \
+    /* ImagingNewDirty always allocates a new image and new pixel storage. */
+    assert(imOut != imIn);
+    assert(imOut->image != imIn->image);
+
+#define EXPAND_LINE(type, yin, yout)                        \
+    {                                                       \
+        const type *restrict in = (type *)imIn->image[yin]; \
+        type *restrict out = (type *)imOut->image[yout];     \
+        type left = in[0];                                   \
+        type right = in[xsize - 1];                          \
+        for (x = 0; x < margin; x++) {                       \
+            out[x] = left;                                   \
+        }                                                    \
+        for (x = 0; x < xsize; x++) {                        \
+            out[x + margin] = in[x];                         \
+        }                                                    \
+        for (x = 0; x < margin; x++) {                       \
+            out[margin + xsize + x] = right;                 \
+        }                                                    \
     }
 
-#define EXPAND(type, image)                                                      \
+#define EXPAND(type)                                                             \
     {                                                                            \
         for (y = 0; y < margin; y++) {                                           \
-            EXPAND_LINE(type, image, 0, y);                                      \
+            EXPAND_LINE(type, 0, y);                                             \
         }                                                                        \
-        for (y = 0; y < imIn->ysize; y++) {                                      \
-            EXPAND_LINE(type, image, y, y + margin);                             \
+        for (y = 0; y < ysize; y++) {                                             \
+            EXPAND_LINE(type, y, y + margin);                                    \
         }                                                                        \
         for (y = 0; y < margin; y++) {                                           \
-            EXPAND_LINE(type, image, imIn->ysize - 1, margin + imIn->ysize + y); \
+            EXPAND_LINE(type, ysize - 1, margin + ysize + y);                    \
         }                                                                        \
     }
 
     ImagingSectionEnter(&cookie);
-    if (imIn->image8) {
-        EXPAND(UINT8, image8);
+    if (imIn->pixelsize == 1) {
+        EXPAND(UINT8);
+    } else if (imIn->pixelsize == 2) {
+        EXPAND(UINT16);
     } else {
-        EXPAND(INT32, image32);
+        EXPAND(UINT32);
     }
     ImagingSectionLeave(&cookie);
 
