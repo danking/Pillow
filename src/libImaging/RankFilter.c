@@ -59,6 +59,89 @@
 
 MakeRankFunction(UINT8) MakeRankFunction(INT32) MakeRankFunction(FLOAT32)
 
+static inline UINT8
+RankMedian3x3UINT8(
+    UINT8 p0,
+    UINT8 p1,
+    UINT8 p2,
+    UINT8 p3,
+    UINT8 p4,
+    UINT8 p5,
+    UINT8 p6,
+    UINT8 p7,
+    UINT8 p8
+) {
+#define RANK_COMPARE_SWAP_UINT8(a, b)      \
+    do {                                   \
+        UINT8 lo_ = (a) < (b) ? (a) : (b); \
+        UINT8 hi_ = (a) < (b) ? (b) : (a); \
+        (a) = lo_;                         \
+        (b) = hi_;                         \
+    } while (0)
+
+    RANK_COMPARE_SWAP_UINT8(p1, p2);
+    RANK_COMPARE_SWAP_UINT8(p4, p5);
+    RANK_COMPARE_SWAP_UINT8(p7, p8);
+    RANK_COMPARE_SWAP_UINT8(p0, p1);
+    RANK_COMPARE_SWAP_UINT8(p3, p4);
+    RANK_COMPARE_SWAP_UINT8(p6, p7);
+    RANK_COMPARE_SWAP_UINT8(p1, p2);
+    RANK_COMPARE_SWAP_UINT8(p4, p5);
+    RANK_COMPARE_SWAP_UINT8(p7, p8);
+    RANK_COMPARE_SWAP_UINT8(p0, p3);
+    RANK_COMPARE_SWAP_UINT8(p5, p8);
+    RANK_COMPARE_SWAP_UINT8(p4, p7);
+    RANK_COMPARE_SWAP_UINT8(p3, p6);
+    RANK_COMPARE_SWAP_UINT8(p1, p4);
+    RANK_COMPARE_SWAP_UINT8(p2, p5);
+    RANK_COMPARE_SWAP_UINT8(p4, p7);
+    RANK_COMPARE_SWAP_UINT8(p4, p2);
+    RANK_COMPARE_SWAP_UINT8(p6, p4);
+    RANK_COMPARE_SWAP_UINT8(p4, p2);
+
+#undef RANK_COMPARE_SWAP_UINT8
+    return p4;
+}
+
+static void
+RankFilter3x3MedianUINT8Row(
+    UINT8 *restrict out,
+    const UINT8 *restrict row0,
+    const UINT8 *restrict row1,
+    const UINT8 *restrict row2,
+    size_t xsize
+) {
+    for (size_t x = 0; x < xsize; x++) {
+        out[x] = RankMedian3x3UINT8(
+            row0[x],
+            row0[x + 1],
+            row0[x + 2],
+            row1[x],
+            row1[x + 1],
+            row1[x + 2],
+            row2[x],
+            row2[x + 1],
+            row2[x + 2]
+        );
+    }
+}
+
+static void
+RankFilter3x3MedianUINT8(Imaging imOut, Imaging im) {
+    // restrict is safe in the row helper: im is read-only and imOut is a fresh
+    // allocation, while distinct input rows are only read.
+    const size_t xsize = (size_t)imOut->xsize;
+    for (int y = 0; y < imOut->ysize; y++) {
+        RankFilter3x3MedianUINT8Row(
+            (UINT8 *)imOut->image[y],
+            (UINT8 *)im->image[y],
+            (UINT8 *)im->image[y + 1],
+            (UINT8 *)im->image[y + 2],
+            xsize
+        );
+    }
+}
+
     Imaging ImagingRankFilter(Imaging im, int size, int rank) {
     Imaging imOut = NULL;
     ImagingSectionCookie cookie;
@@ -115,7 +198,11 @@ MakeRankFunction(UINT8) MakeRankFunction(INT32) MakeRankFunction(FLOAT32)
         free(buf);                                                                \
     } while (0)
 
-    if (im->image8) {
+    if (im->image8 && size == 3 && rank == 4) {
+        ImagingSectionEnter(&cookie);
+        RankFilter3x3MedianUINT8(imOut, im);
+        ImagingSectionLeave(&cookie);
+    } else if (im->image8) {
         RANK_BODY(UINT8);
     } else if (im->type == IMAGING_TYPE_INT32) {
         RANK_BODY(INT32);

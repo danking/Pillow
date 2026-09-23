@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 
 import pytest
 
@@ -23,6 +24,30 @@ MODES = (
     "RGBX",
     "CMYK",
 )
+
+
+def medianfilter_3x3_reference(im: Image.Image) -> Image.Image:
+    size = im.size
+    expected_bands = []
+    for band in im.split():
+        expected = []
+        for y in range(size[1]):
+            for x in range(size[0]):
+                window = [
+                    band.getpixel(
+                        (
+                            min(max(x + dx, 0), size[0] - 1),
+                            min(max(y + dy, 0), size[1] - 1),
+                        )
+                    )
+                    for dy in (-1, 0, 1)
+                    for dx in (-1, 0, 1)
+                ]
+                expected.append(sorted(window)[4])
+        expected_bands.append(Image.new("L", size))
+        expected_bands[-1].putdata(expected)
+
+    return Image.merge(im.mode, expected_bands)
 
 
 @pytest.mark.parametrize(
@@ -190,6 +215,50 @@ def test_rankfilter_overflow() -> None:
         rankfilter.size = size
         with pytest.raises(ValueError, match="filter size too large"):
             im.filter(rankfilter)
+
+
+@pytest.mark.parametrize(
+    "mode", ("L", "LA", "La", "RGB", "RGBA", "RGBa", "RGBX", "CMYK")
+)
+@pytest.mark.parametrize("pattern", ("random", "constant", "low_cardinality", "duplicates"))
+def test_medianfilter_3x3_uint8_patterns(mode: str, pattern: str) -> None:
+    rng = random.Random(8675309)
+    bands = Image.getmodebands(mode)
+    size = (17, 13)
+
+    if pattern == "random":
+        values = [rng.randrange(256) for _ in range(size[0] * size[1] * bands)]
+    elif pattern == "constant":
+        values = [73] * (size[0] * size[1] * bands)
+    elif pattern == "low_cardinality":
+        palette = (0, 17, 17, 128, 240, 255)
+        values = [
+            palette[rng.randrange(len(palette))]
+            for _ in range(size[0] * size[1] * bands)
+        ]
+    else:
+        values = [(i // bands) % 3 * 85 for i in range(size[0] * size[1] * bands)]
+
+    im = Image.frombytes(mode, size, bytes(values))
+    result = im.filter(ImageFilter.MedianFilter(3))
+
+    assert_image_equal(result, medianfilter_3x3_reference(im))
+
+
+@pytest.mark.parametrize("mode", ("L", "RGB"))
+@pytest.mark.parametrize("size", ((1, 1), (1, 5), (5, 1), (2, 2)))
+def test_medianfilter_3x3_tiny_uint8_images(mode: str, size: tuple[int, int]) -> None:
+    im = hopper(mode).resize(size)
+    assert_image_equal(
+        im.filter(ImageFilter.MedianFilter(3)), medianfilter_3x3_reference(im)
+    )
+
+
+@pytest.mark.parametrize("mode", ("I", "F"))
+def test_medianfilter_3x3_numeric_modes(mode: str) -> None:
+    im = Image.new(mode, (3, 3))
+    im.putdata([5, 1, 5, 7, 3, 3, 9, 1, 5])
+    assert im.filter(ImageFilter.MedianFilter(3)).getpixel((1, 1)) == 5
 
 
 def test_builtinfilter_p() -> None:

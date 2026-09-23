@@ -105,6 +105,11 @@ specified. This will default to ``ImageFile.SAFEBLOCK``.
 Other changes
 =============
 
+Faster 3x3 median filters
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+3x3 median filtering has been optimized for 8-bit images.
+
 Python 3.15 beta
 ^^^^^^^^^^^^^^^^
 
